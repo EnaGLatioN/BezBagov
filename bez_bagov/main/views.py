@@ -9,6 +9,8 @@ from django.views.decorators.http import require_GET, require_POST
 from bez_bagov import redis_client as rc
 from bez_bagov.telegram_client import send_to_telegram
 
+from .models import Work
+
 
 COOKIE_NAME = "chat_session_id"
 COOKIE_MAX_AGE = 60 * 30  # 30 минут
@@ -77,3 +79,26 @@ def ping(request):
         rc.touch(sid)
         return JsonResponse({"ok": True})
     return JsonResponse({"ok": False})
+
+
+@require_GET
+def work_list(request):
+    """
+    Отдаёт список активных работ портфолио.
+    Сортировка: новые сверху (задана в Meta.ordering).
+    """
+    works = Work.objects.filter(status=True).only(
+        "id", "title", "description", "image", "created_at"
+    )
+
+    data = [
+        {
+            "id": str(w.id),
+            "title": w.title,
+            "description": w.description,
+            "image": request.build_absolute_uri(w.image.url) if w.image else None,
+            "created_at": w.created_at.isoformat(),
+        }
+        for w in works
+    ]
+    return JsonResponse({"works": data}, json_dumps_params={"ensure_ascii": False})
