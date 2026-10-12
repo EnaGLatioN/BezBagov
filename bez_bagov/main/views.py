@@ -7,10 +7,11 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 
 from bez_bagov import redis_client as rc
+from bez_bagov.telegram_client import send_to_telegram
 
 
 COOKIE_NAME = "chat_session_id"
-COOKIE_MAX_AGE = 60 * 30
+COOKIE_MAX_AGE = 60 * 30  # 30 минут
 
 
 def _get_or_create_session(request):
@@ -46,10 +47,9 @@ def send_message(request):
     except ValueError:
         return JsonResponse({"error": "empty message"}, status=400)
 
-    answer = "SSSS"
-    rc.push_message(sid, role="bot", text=answer)
+    delivered = send_to_telegram(text, session_id=sid)
 
-    resp = JsonResponse({"session_id": sid, "answer": answer})
+    resp = JsonResponse({"session_id": sid, "delivered": delivered})
     resp.set_cookie(
         COOKIE_NAME,
         sid,
