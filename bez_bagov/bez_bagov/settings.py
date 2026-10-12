@@ -9,7 +9,7 @@ https://docs.djangoproject.com/en/6.1/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.1/ref/settings/
 """
-
+import os
 from pathlib import Path
 from decouple import config as cnf
 
@@ -38,7 +38,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'main',
+    'main.apps.MainConfig',
 ]
 
 MIDDLEWARE = [
@@ -128,7 +128,11 @@ MAILERS = {
     },
 }
 
-REDIS_HOST = "127.0.0.1"
-REDIS_PORT = 6379
-REDIS_DB = 0
-REDIS_PASSWORD = None
+REDIS_HOST = cnf('REDIS_HOST', cast=str)
+REDIS_PORT = cnf('REDIS_PORT', cast=int)
+REDIS_DB = cnf('REDIS_DB', cast=int)
+REDIS_PASSWORD = cnf('REDIS_PASSWORD', cast=str)
+
+MEDIA_URL = "/media/"
+MEDIA_ROOT = os.path.join(BASE_DIR, "media")
+
