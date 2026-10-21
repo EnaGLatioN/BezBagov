@@ -10,7 +10,7 @@ services:
       - "8000:8000"
     volumes:
       - ./bez_bagov/db.sqlite3:/application/bez_bagov/db.sqlite3
-      - ./media:/application/media
+      - ./media:/application/bez_bagov/media
     depends_on:
       redis:
         condition: service_healthy
