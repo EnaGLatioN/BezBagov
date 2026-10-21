@@ -29,7 +29,7 @@ def send_to_telegram(text: str, session_id: str = "") -> bool:
     headers = {"Content-Type": "application/json"}
 
     last_err = None
-    for attempt in range(3):
+    for attempt in range(10):
         try:
             req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
             with urllib.request.urlopen(req, timeout=5) as resp:
@@ -41,8 +41,8 @@ def send_to_telegram(text: str, session_id: str = "") -> bool:
             return True
         except (urllib.error.URLError, urllib.error.HTTPError, OSError, json.JSONDecodeError) as e:
             last_err = e
-            if attempt < 2:
-                time.sleep(1)
+            if attempt < 9:
+                time.sleep(0.5)
                 continue
 
     logger.exception("Telegram send failed after retries: %s", last_err)
