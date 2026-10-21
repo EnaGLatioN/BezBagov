@@ -18,7 +18,7 @@ def send_to_telegram(text: str, session_id: str = "") -> bool:
         logger.warning("Telegram не настроен: нет TELEGRAM_BOT_TOKEN или TELEGRAM_CHAT_ID")
         return False
 
-    prefix = f"[chat:{session_id[:8]}] " if session_id else ""
+    prefix = f"[chat:{session_id}] " if session_id else ""
     payload = json.dumps({
         "chat_id": chat_id,
         "text": f"{prefix}{text}",

@@ -15,6 +15,21 @@ services:
       redis:
         condition: service_healthy
 
+  tg_poll:
+    container_name: bez_bagov_tg_poll
+    env_file: ./.env
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: poetry run python manage.py tg_poll
+    restart: unless-stopped
+    volumes:
+      - ./bez_bagov/db.sqlite3:/application/bez_bagov/db.sqlite3
+      - ./media:/application/media
+    depends_on:
+      redis:
+        condition: service_healthy
+
   redis:
     container_name: bez_bagov_redis
     image: redis:7-alpine
