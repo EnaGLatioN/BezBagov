@@ -21,7 +21,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    command: poetry run python manage.py tg_poll
+    entrypoint: []
+    working_dir: /application/bez_bagov
+    command: python manage.py tg_poll
     restart: unless-stopped
     volumes:
       - ./bez_bagov/db.sqlite3:/application/bez_bagov/db.sqlite3
