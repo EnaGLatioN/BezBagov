@@ -97,6 +97,8 @@ def work_list(request):
             "title": w.title,
             "description": w.description,
             "image": request.build_absolute_uri(w.image.url) if w.image else None,
+            "task": w.task,
+            "url": w.url,
             "created_at": w.created_at.isoformat(),
         }
         for w in works

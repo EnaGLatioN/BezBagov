@@ -27,9 +27,17 @@ class Work(models.Model):
         max_length=255,
         verbose_name="Название",
     )
+    task = models.TextField(
+        blank=True,
+        verbose_name="Описание",
+    )
     description = models.TextField(
         blank=True,
         verbose_name="Описание",
+    )
+    url = models.URLField(
+        blank=True,
+        null=True,
     )
     created_at = models.DateTimeField(
         auto_now_add=True,
