@@ -9,7 +9,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./bez_bagov/db.sqlite3:/application/bez_bago/db.sqlite3
+      - ./bez_bagov/db.sqlite3:/application/bez_bagov/db.sqlite3
     depends_on:
       redis:
         condition: service_healthy
