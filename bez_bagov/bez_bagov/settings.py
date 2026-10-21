@@ -136,3 +136,5 @@ REDIS_PASSWORD = cnf('REDIS_PASSWORD', cast=str)
 MEDIA_URL = "/media/"
 MEDIA_ROOT = os.path.join(BASE_DIR, "media")
 
+TELEGRAM_BOT_TOKEN=cnf('TELEGRAM_BOT_TOKEN', cast=str)
+TELEGRAM_CHAT_ID= cnf('TELEGRAM_CHAT_ID', cast=str)
