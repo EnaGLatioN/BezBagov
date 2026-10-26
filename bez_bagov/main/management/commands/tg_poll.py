@@ -89,29 +89,48 @@ class Command(BaseCommand):
         if not clean:
             return
 
-        try:
-            rc.push_message(sid, role="assistant", text=clean)
-            self.stdout.write(f"-> {sid}: {clean[:80]}")
-            self._send_reply(
-                token=self._token,
-                chat_id=msg["chat"]["id"],
-                message_id=msg["message_id"],
-                text="ок",
-            )
-        except Exception as e:
-            self.stderr.write(f"push_message failed: {e!r}")
+        # 10 попыток push_message
+
+        rc.push_message(sid, role="assistant", text=clean)
+
+
+        self.stdout.write(f"-> {sid}: {clean[:80]}")
+
+        # 10 попыток send_reply («ок»)
+        self._send_reply(
+            token=self._token,
+            chat_id=msg["chat"]["id"],
+            message_id=msg["message_id"],
+            text="ок",
+        )
 
     def _send_reply(self, token: str, chat_id: int, message_id: int, text: str) -> None:
-        try:
-            httpx.post(
-                f"https://api.telegram.org/bot{token}/sendMessage",
-                json={
-                    "chat_id": chat_id,
-                    "text": text,
-                    "reply_to_message_id": message_id,
-                    "allow_sending_without_reply": True,
-                },
-                timeout=10,
-            )
-        except httpx.HTTPError as e:
-            self.stderr.write(f"send_reply failed: {e!r}")
+        last_err = None
+        for attempt in range(10):
+            try:
+                resp = httpx.post(
+                    f"https://api.telegram.org/bot{token}/sendMessage",
+                    json={
+                        "chat_id": chat_id,
+                        "text": text,
+                        "reply_to_message_id": message_id,
+                        "allow_sending_without_reply": True,
+                    },
+                    timeout=10,
+                )
+                data = resp.json()
+                if data.get("ok"):
+                    return
+                last_err = RuntimeError(f"telegram not ok: {data}")
+                self.stderr.write(
+                    f"send_reply attempt {attempt + 1}/10 failed: {last_err!r}"
+                )
+            except httpx.HTTPError as e:
+                last_err = e
+                self.stderr.write(
+                    f"send_reply attempt {attempt + 1}/10 failed: {e!r}"
+                )
+            if attempt < 9:
+                time.sleep(1)
+
+        self.stderr.write(f"send_reply failed after 10 attempts: {last_err!r}")
