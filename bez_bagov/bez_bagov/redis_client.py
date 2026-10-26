@@ -1,125 +1,108 @@
 import json
-import re
 import time
+import uuid
 
-import httpx
+import redis
 from django.conf import settings
-from django.core.management.base import BaseCommand
 
-from bez_bagov import redis_client as rc
+redis_client = redis.Redis(
+    host=settings.REDIS_HOST,
+    port=settings.REDIS_PORT,
+    db=settings.REDIS_DB,
+    password=settings.REDIS_PASSWORD or None,
+    decode_responses=True,
+    socket_timeout=2,
+    socket_connect_timeout=2,
+    health_check_interval=30,
+)
 
-# ловит [chat:<sid>] где sid — 8..64 символа hex/uuid
-SID_RE = re.compile(r"\[chat:([0-9a-fA-F-]{8,64})\]")
+SESSION_TTL = 60 * 30                # 30 минут
+MAX_MESSAGES = 100
+MAX_MESSAGE_LEN = 2000
+
+_PUSH_SCRIPT = """
+redis.call('LPUSH', KEYS[1], ARGV[1])
+redis.call('LTRIM', KEYS[1], 0, ARGV[2])
+redis.call('EXPIRE', KEYS[1], ARGV[3])
+redis.call('HSET', KEYS[2], 'last_seen', ARGV[4])
+redis.call('EXPIRE', KEYS[2], ARGV[3])
+return 1
+"""
+_push = redis_client.register_script(_PUSH_SCRIPT)
 
 
-class Command(BaseCommand):
-    help = "Long-polling Telegram -> Redis (ответы оператора в чат на сайте)"
+def _keys(session_id: str) -> tuple[str, str]:
+    return f"chat:messages:{session_id}", f"chat:session:{session_id}"
 
-    def handle(self, *args, **opts):
-        token = getattr(settings, "TELEGRAM_BOT_TOKEN", "")
-        if not token:
-            self.stderr.write("TELEGRAM_BOT_TOKEN не задан")
-            return
 
-        self._token = token
-        offset = 0
-        self.stdout.write("polling started")
+def create_session(user_agent: str = "", ip_hash: str = "") -> str:
+    session_id = uuid.uuid4().hex
+    meta_key = f"chat:session:{session_id}"
+    redis_client.hset(
+        meta_key,
+        mapping={
+            "created_at": int(time.time()),
+            "last_seen": int(time.time()),
+            "user_agent": user_agent[:300],
+            "ip_hash": ip_hash,
+        },
+    )
+    redis_client.expire(meta_key, SESSION_TTL)
+    redis_client.zadd("chat:index:active", {session_id: time.time()})
+    redis_client.expire("chat:index:active", SESSION_TTL * 2)  # подстраховка
+    return session_id
 
-        while True:
-            try:
-                r = self._get_updates(token, offset)
-                data = r.json()
-                if not data.get("ok"):
-                    self.stderr.write(f"telegram error: {data}")
-                    time.sleep(1)
-                    continue
 
-                for upd in data.get("result", []):
-                    offset = upd["update_id"] + 1
-                    self._handle_update(upd)
+def push_message(session_id: str, role: str, text: str) -> dict:
+    text = (text or "").strip()
+    if not text:
+        raise ValueError("empty message")
+    if len(text) > MAX_MESSAGE_LEN:
+        text = text[:MAX_MESSAGE_LEN]
 
-            except httpx.HTTPError as e:
-                self.stderr.write(f"poll error: {e!r}")
-                time.sleep(1)
-            except Exception as e:
-                self.stderr.write(f"unexpected error: {e!r}")
-                time.sleep(1)
+    msg = {
+        "id": uuid.uuid4().hex[:12],
+        "ts": int(time.time()),
+        "role": role,
+        "text": text,
+    }
+    msg_key, meta_key = _keys(session_id)
+    _push(
+        keys=[msg_key, meta_key],
+        args=[
+            json.dumps(msg, ensure_ascii=False),
+            MAX_MESSAGES - 1,
+            SESSION_TTL,
+            int(time.time()),
+        ],
+    )
+    redis_client.zadd("chat:index:active", {session_id: time.time()})
+    return msg
 
-    def _get_updates(self, token: str, offset: int) -> httpx.Response:
-        # 10 попыток — переживаем "моргание" сети
-        last_err = None
-        for attempt in range(10):
-            try:
-                return httpx.get(
-                    f"https://api.telegram.org/bot{token}/getUpdates",
-                    params={"offset": offset, "timeout": 30},
-                    timeout=40,
-                )
-            except httpx.HTTPError as e:
-                last_err = e
-                if attempt < 9:
-                    time.sleep(1)
-                    continue
-                raise
-        raise last_err
 
-    def _handle_update(self, upd: dict):
-        msg = upd.get("message") or upd.get("edited_message") or {}
-        if not msg:
-            return
-        if msg.get("from", {}).get("is_bot"):
-            return
+def get_messages(session_id: str, limit: int = 50) -> list[dict]:
+    msg_key, meta_key = _keys(session_id)
+    raw = redis_client.lrange(msg_key, 0, limit - 1)
+    redis_client.hset(meta_key, "last_seen", int(time.time()))
+    redis_client.expire(meta_key, SESSION_TTL)
+    return [json.loads(item) for item in reversed(raw)]
 
-        text = msg.get("text", "") or ""
-        if not text:
-            return
 
-        reply_text = (msg.get("reply_to_message") or {}).get("text", "") or ""
-        m = SID_RE.search(reply_text) or SID_RE.search(text)
-        if not m:
-            return
+def session_exists(session_id: str) -> bool:
+    return bool(redis_client.exists(f"chat:session:{session_id}"))
 
-        sid = m.group(1)
 
-        if not rc.session_exists(sid):
-            self.stdout.write(f"session {sid} not found/expired")
-            return
+def touch(session_id: str) -> None:
+    meta_key = f"chat:session:{session_id}"
+    redis_client.hset(meta_key, "last_seen", int(time.time()))
+    redis_client.expire(meta_key, SESSION_TTL)
+    redis_client.zadd("chat:index:active", {session_id: time.time()})
 
-        clean = SID_RE.sub("", text).strip()
-        if not clean:
-            return
 
-        # 10 попыток push_message с паузой 1 секунда
-        for attempt in range(10):
-            try:
-                rc.push_message(sid, role="assistant", text=clean)
-                self.stdout.write(f"-> {sid}: {clean[:80]}")
-                self._send_reply(
-                    token=self._token,
-                    chat_id=msg["chat"]["id"],
-                    message_id=msg["message_id"],
-                    text="ок",
-                )
-                break
-            except Exception as e:
-                if attempt < 9:
-                    time.sleep(1)
-                    continue
-                self.stderr.write(
-                    f"push_message failed after 10 attempts: {e!r}"
-                )
-
-    def _send_reply(self, token: str, chat_id: int, message_id: int, text: str) -> None:
-        try:
-            httpx.post(
-                f"https://api.telegram.org/bot{token}/sendMessage",
-                json={
-                    "chat_id": chat_id,
-                    "text": text,
-                    "reply_to_message_id": message_id,
-                    "allow_sending_without_reply": True,
-                },
-                timeout=10,
-            )
-        except httpx.HTTPError as e:
-            self.stderr.write(f"send_reply failed: {e!r}")
+def rate_ok(session_id: str, limit: int = 20, window: int = 60) -> bool:
+    key = f"chat:rate:{session_id}"
+    pipe = redis_client.pipeline()
+    pipe.incr(key)
+    pipe.expire(key, window, nx=True)
+    count, _ = pipe.execute()
+    return int(count) <= limit
