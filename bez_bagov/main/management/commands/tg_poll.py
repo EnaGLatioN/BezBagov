@@ -21,6 +21,7 @@ class Command(BaseCommand):
             self.stderr.write("TELEGRAM_BOT_TOKEN не задан")
             return
 
+        self._token = token
         offset = 0
         self.stdout.write("polling started")
 
@@ -30,7 +31,7 @@ class Command(BaseCommand):
                 data = r.json()
                 if not data.get("ok"):
                     self.stderr.write(f"telegram error: {data}")
-                    time.sleep(3)
+                    time.sleep(1)
                     continue
 
                 for upd in data.get("result", []):
@@ -39,15 +40,15 @@ class Command(BaseCommand):
 
             except httpx.HTTPError as e:
                 self.stderr.write(f"poll error: {e!r}")
-                time.sleep(3)
+                time.sleep(1)
             except Exception as e:
                 self.stderr.write(f"unexpected error: {e!r}")
-                time.sleep(3)
+                time.sleep(1)
 
     def _get_updates(self, token: str, offset: int) -> httpx.Response:
-        # 3 попытки — переживаем "моргание" сети
+        # 10 попыток — переживаем "моргание" сети
         last_err = None
-        for attempt in range(3):
+        for attempt in range(10):
             try:
                 return httpx.get(
                     f"https://api.telegram.org/bot{token}/getUpdates",
@@ -56,8 +57,8 @@ class Command(BaseCommand):
                 )
             except httpx.HTTPError as e:
                 last_err = e
-                if attempt < 2:
-                    time.sleep(2)
+                if attempt < 9:
+                    time.sleep(1)
                     continue
                 raise
         raise last_err
@@ -91,6 +92,26 @@ class Command(BaseCommand):
         try:
             rc.push_message(sid, role="assistant", text=clean)
             self.stdout.write(f"-> {sid}: {clean[:80]}")
+            self._send_reply(
+                token=self._token,
+                chat_id=msg["chat"]["id"],
+                message_id=msg["message_id"],
+                text="ок",
+            )
         except Exception as e:
             self.stderr.write(f"push_message failed: {e!r}")
-            
+
+    def _send_reply(self, token: str, chat_id: int, message_id: int, text: str) -> None:
+        try:
+            httpx.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={
+                    "chat_id": chat_id,
+                    "text": text,
+                    "reply_to_message_id": message_id,
+                    "allow_sending_without_reply": True,
+                },
+                timeout=10,
+            )
+        except httpx.HTTPError as e:
+            self.stderr.write(f"send_reply failed: {e!r}")
