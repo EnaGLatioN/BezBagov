@@ -89,7 +89,7 @@ def work_list(request):
     """
     works = Work.objects.filter(status=True).only(
         "id", "title", "description", "image", "created_at"
-    )
+    ).order_by("created_at")
 
     data = [
         {
