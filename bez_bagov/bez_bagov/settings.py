@@ -139,3 +139,8 @@ MEDIA_ROOT = os.path.join(BASE_DIR, "media")
 TELEGRAM_BOT_TOKEN=cnf('TELEGRAM_BOT_TOKEN', cast=str)
 TELEGRAM_CHAT_ID= cnf('TELEGRAM_CHAT_ID', cast=str)
 
+PROXY_HOST = cnf('PROXY_HOST', cast=str)
+PROXY_HTTP_PORT = cnf('PROXY_HTTP_PORT', cast=int)
+PROXY_SOCKS5_PORT = cnf('PROXY_SOCKS5_PORT', cast=int)
+PROXY_USER = cnf('PROXY_USER', cast=str)
+PROXY_PASS = cnf('PROXY_PASS', cast=str)
