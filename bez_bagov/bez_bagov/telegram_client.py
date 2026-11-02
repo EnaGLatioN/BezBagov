@@ -10,6 +10,22 @@ logger = logging.getLogger(__name__)
 
 TELEGRAM_API = "https://api.telegram.org"
 
+# Прокси из таблицы
+PROXY_HOST = settings.PROXY_HOST
+PROXY_HTTP_PORT = settings.PROXY_HTTP_PORT
+PROXY_SOCKS5_PORT = settings.PROXY_SOCKS5_PORT
+PROXY_USER = settings.PROXY_USER
+PROXY_PASS = settings.PROXY_PASS
+
+# Для urllib удобнее HTTP(S)-прокси
+PROXY_URL = f"http://{PROXY_USER}:{PROXY_PASS}@{PROXY_HOST}:{PROXY_HTTP_PORT}"
+
+proxy_handler = urllib.request.ProxyHandler({
+    "http": PROXY_URL,
+    "https": PROXY_URL,
+})
+opener = urllib.request.build_opener(proxy_handler)
+
 
 def send_to_telegram(text: str, session_id: str = "") -> bool:
     token = getattr(settings, "TELEGRAM_BOT_TOKEN", "")
@@ -32,7 +48,7 @@ def send_to_telegram(text: str, session_id: str = "") -> bool:
     for attempt in range(10):
         try:
             req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
-            with urllib.request.urlopen(req, timeout=5) as resp:
+            with opener.open(req, timeout=10) as resp:
                 body = resp.read()
             data = json.loads(body or b"{}")
             if not data.get("ok"):

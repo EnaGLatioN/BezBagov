@@ -1,4 +1,3 @@
-import json
 import re
 import time
 
@@ -12,6 +11,19 @@ from bez_bagov import redis_client as rc
 SID_RE = re.compile(r"\[chat:([0-9a-fA-F-]{8,64})\]")
 
 
+def _build_proxy_url() -> str | None:
+    """Собирает URL HTTP(S)-прокси из settings. Если не задан — вернёт None."""
+    host = getattr(settings, "PROXY_HOST", "")
+    port = getattr(settings, "PROXY_HTTP_PORT", "")
+    user = getattr(settings, "PROXY_USER", "")
+    pwd = getattr(settings, "PROXY_PASS", "")
+    if not host or not port:
+        return None
+    if user:
+        return f"http://{user}:{pwd}@{host}:{port}"
+    return f"http://{host}:{port}"
+
+
 class Command(BaseCommand):
     help = "Long-polling Telegram -> Redis (ответы оператора в чат на сайте)"
 
@@ -22,38 +34,62 @@ class Command(BaseCommand):
             return
 
         self._token = token
+
+        # --- прокси из settings ---
+        PROXY_HOST = getattr(settings, "PROXY_HOST", "")
+        PROXY_HTTP_PORT = getattr(settings, "PROXY_HTTP_PORT", "")
+        PROXY_SOCKS5_PORT = getattr(settings, "PROXY_SOCKS5_PORT", "")
+        PROXY_USER = getattr(settings, "PROXY_USER", "")
+        PROXY_PASS = getattr(settings, "PROXY_PASS", "")
+
+        proxy_url = _build_proxy_url()
+        if proxy_url:
+            self.stdout.write(f"using proxy: {PROXY_HOST}:{PROXY_HTTP_PORT}")
+        else:
+            self.stdout.write("proxy not configured, using direct connection")
+
+        # httpx-клиент с прокси. trust_env=False — чтобы не подхватывать
+        # системные HTTP_PROXY/HTTPS_PROXY из окружения случайно
+        self._client = httpx.Client(
+            proxy=proxy_url,
+            timeout=httpx.Timeout(40.0, connect=10.0),
+            trust_env=False,
+        )
+
         offset = 0
         self.stdout.write("polling started")
 
-        while True:
-            try:
-                r = self._get_updates(token, offset)
-                data = r.json()
-                if not data.get("ok"):
-                    self.stderr.write(f"telegram error: {data}")
+        try:
+            while True:
+                try:
+                    r = self._get_updates(token, offset)
+                    data = r.json()
+                    if not data.get("ok"):
+                        self.stderr.write(f"telegram error: {data}")
+                        time.sleep(1)
+                        continue
+
+                    for upd in data.get("result", []):
+                        offset = upd["update_id"] + 1
+                        self._handle_update(upd)
+
+                except httpx.HTTPError as e:
+                    self.stderr.write(f"poll error: {e!r}")
                     time.sleep(1)
-                    continue
-
-                for upd in data.get("result", []):
-                    offset = upd["update_id"] + 1
-                    self._handle_update(upd)
-
-            except httpx.HTTPError as e:
-                self.stderr.write(f"poll error: {e!r}")
-                time.sleep(1)
-            except Exception as e:
-                self.stderr.write(f"unexpected error: {e!r}")
-                time.sleep(1)
+                except Exception as e:
+                    self.stderr.write(f"unexpected error: {e!r}")
+                    time.sleep(1)
+        finally:
+            self._client.close()
 
     def _get_updates(self, token: str, offset: int) -> httpx.Response:
         # 10 попыток — переживаем "моргание" сети
         last_err = None
         for attempt in range(10):
             try:
-                return httpx.get(
+                return self._client.get(
                     f"https://api.telegram.org/bot{token}/getUpdates",
                     params={"offset": offset, "timeout": 30},
-                    timeout=40,
                 )
             except httpx.HTTPError as e:
                 last_err = e
@@ -89,10 +125,7 @@ class Command(BaseCommand):
         if not clean:
             return
 
-        # 10 попыток push_message
-
         rc.push_message(sid, role="assistant", text=clean)
-
 
         self.stdout.write(f"-> {sid}: {clean[:80]}")
 
@@ -108,7 +141,7 @@ class Command(BaseCommand):
         last_err = None
         for attempt in range(10):
             try:
-                resp = httpx.post(
+                resp = self._client.post(
                     f"https://api.telegram.org/bot{token}/sendMessage",
                     json={
                         "chat_id": chat_id,
